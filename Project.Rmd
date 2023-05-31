@@ -1,0 +1,123 @@
+---
+title: "Predicting Weight Lifting Activity Based on Sensor Data"
+author: "Navin Sharma"
+date: "2023-05-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+
+```
+
+```{r echo=FALSE}
+set.seed(42)
+library(caret)
+library(rpart)
+library(gbm)
+library(forecast)
+library(readr)
+library(randomForest)
+```
+
+## Summary
+Sensors are increasingly used to measure human activity. A research project conducted by Velloso et al tries to answer the question on whether the sensors can be used to measure activity quality. In this project, I am using data collected by the authors in which they measure six participants performing a dumbbell bicep curl in five different ways using five sensors. A machine learning model built using a random forest algorithm is built to classify the type of activity based on the collected sensor data.
+
+## Data cleansing and variable selection
+
+The original source data has 160 variables and 19,622 observations. A quick scan of the data shows that there are variables with a significant number of NAs and other variables that are mostly empty. These variables are removed from the data (see appendix).
+
+The model is built on training data with 53 variables and 14,718 observations. The testing data has 53 variables and 4904 observations.
+
+
+## Model build
+
+The data set is split into training and testing sets with a 75-25 ratio. The testing data is used to estimate the out of sample error rate. 
+
+The random forest model is built using the rf method within caret. Parallel processing is used to speed up training time. A five fold cross validation is used instead of bootstrapping for speed. The model was iteratively trained on 10, 50, 100, and 200 trees until an acceptable error rate (via confusionMatrix.train) was achieved. The 200 tree model had an accuracy of over 99%. The details are in the appendix.
+
+## Cross validation
+
+The final model had an accuracy of 0.9935 on the testing sample. Recall that the testing sample was 25% of the initial data set. Details are in the appendix.
+
+## 20 unknown test cases
+The model was able to predict all 20 unknown test cases with 100% accuracy. Details are in the appendix.
+
+## Appendix
+
+```{r echo=FALSE}
+# load the data
+dataset <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+validation <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+
+# convert the type of exercise to a factor
+dataset$classe = factor(dataset$classe)
+
+```
+
+### Training and testing data split
+```{r}
+# create training and testing sets
+# the testing set will be used to estimate error rate
+inTrain = createDataPartition(y=dataset$classe, p=0.75, list=FALSE)
+training = dataset[inTrain,]
+testing = dataset[-inTrain,]
+```
+
+### Variable selection
+```{r}
+NAcolumns <- colSums(is.na(training))/length(training$X)
+NAcolumnsNames <- names(NAcolumns[NAcolumns > 0])
+
+nonEmptyColumns <- colSums((training=="")/length(training$roll_belt))
+nonEmptyColumnsNames <- names(nonEmptyColumns[nonEmptyColumns>0])
+
+firstSeven <- names(training[,1:7])
+
+training <- training[, !names(training) %in% NAcolumnsNames]
+training <- training[, !names(training) %in% nonEmptyColumnsNames]
+training <- training[, !names(training) %in% firstSeven]
+
+# check for near zero variables
+nsv <- nearZeroVar(training)
+```
+
+### Model build
+```{r}
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+fitControl <- trainControl(method = "cv", number = 3, allowParallel = TRUE)
+ntrees <- 200
+
+rfFit <- train(classe~.,data=training,method="rf",trControl=fitControl,ntree=ntrees)
+
+stopCluster(cluster)
+registerDoSEQ()
+
+rfFit
+```
+
+### Cross validation
+```{r}
+testing <- testing[, !names(testing) %in% NAcolumnsNames]
+testing <- testing[, !names(testing) %in% nonEmptyColumnsNames]
+testing <- testing[, !names(testing) %in% firstSeven]
+
+pred <- predict(rfFit, newdata = testing)
+confusionMatrix(pred,as.factor(testing$classe))
+```
+
+### 20 Unknown Test Cases
+```{r}
+validation <- validation[, !names(validation) %in% NAcolumnsNames]
+validation <- validation[, !names(validation) %in% nonEmptyColumnsNames]
+validation <- validation[, !names(validation) %in% firstSeven]
+
+pred2 <- predict(rfFit, newdata = validation)
+pred2
+```
