@@ -1,7 +1,18 @@
-# https://stackoverflow.com/questions/23075506/how-to-improve-randomforest-performance
+---
+title: "Predicting Weight Lifting Activity Based on Sensor Data"
+author: "Navin Sharma"
+date: "2023-05-31"
+output: html_document
+---
 
-#training$classe = factor(training$classe)
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
 
+```
+
+```{r echo=FALSE}
 set.seed(42)
 library(caret)
 library(rpart)
@@ -17,13 +28,32 @@ testing <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-tes
 # convert the type of exercise to a factor
 dataset$classe = factor(dataset$classe)
 
+```
+
+
+## Summary
+Sensors are increasingly used to measure human activity. A research project conducted by Velloso et al tries to answer the question on whether the sensors can be used to measure activity quality. In this project, I am using data collected by the authors in which they measure six participants performing a dumbbell bicep curl in five different ways using five sensors. A machine learning model built using a random forest algorithm is built to classify the type of activity based on the collected sensor data.
+
+## Training and validation sets
+```{r}
 # create training and validation sets
 # the validation set will be used to estimate error rate
-inTrain = createDataPartition(y=dataset$classe, p=0.75, list=FALSE)
-training = dataset[inTrain,]
-validation = dataset[-inTrain,]
+inTrain <- createDataPartition(y=dataset$classe, p=0.75, list=FALSE)
+training <- dataset[inTrain,]
+validation <- dataset[-inTrain,]
+```
 
+## Data cleansing and variable selection
 
+The original source data has 160 variables and 19,622 observations. A quick scan of the data shows that there are variables with a significant number of NAs and other variables that are mostly empty. These variables are removed from the data.
+
+Finally, the first seven variables are removed. The first two are the row number and user name. The user name / row number combination is problematic because it can be used by the algorithm to predict the class type. However, the final test data might not have this information causing issues. The other excluded data in the first seven variables are the timestamps and window numbers.
+
+This leaves 53 variables. A test for near zero variables using nearZeroVar() shows that none exist after cleaning.
+
+The model is built on training data with 53 variables and 14,718 observations. The validation data has 53 variables and 4904 observations.
+
+```{r}
 NAcolumns <- colSums(is.na(training))/length(training$X)
 NAcolumnsNames <- names(NAcolumns[NAcolumns > 0])
 
@@ -37,12 +67,31 @@ training <- training[, !names(training) %in% nonEmptyColumnsNames]
 training <- training[, !names(training) %in% firstSeven]
 
 # check for near zero variables
-nzv <- nearZeroVar(training)
+nsv <- nearZeroVar(training)
+```
 
+
+
+## Model build
+
+The data set is split into training and validation sets with a 75-25 ratio. The validation data is used to estimate the out of sample error rate. 
+
+The random forest model was picked because it excels at factor classification with large data sets. However, the initial runs failed either because of the large time required to train or memory issues.
+
+A few steps were taken to solve this based on advice from data science articles
+
+* Lower the number of trees and increase them until a desired accuracy is reached
+* Run the model using parallel processing
+* Use a faster resampling method instead of bootstrapping
+
+The initial model was built using the rf method within caret with five trees, parallel processing, and five fold cross validation. Bootstrapping was compared to cross validation at 5 trees, and cross validation actually had a slightly higher accuracy (0.9742 vs 0.9733).
+
+The model was then iteratively trained on 10, 50, 100, and 200 trees for comparison to see how high the accuracy would go. Accuracy did not increase between 100 and 200 trees. 
+
+```{r}
 # parallel processing
 library(parallel)
 library(doParallel)
-
 
 # 5 trees
 cluster <- makeCluster(detectCores() - 1) # leave one core for others
@@ -110,25 +159,20 @@ rfFit200Trees <- train(classe~.,data=training,method="rf",trControl=fitControl,n
 
 stopCluster(cluster)
 registerDoSEQ()
+```
 
+The following chart shows the accuracy by tree count. Note that the accuracy stabilizes at 50+ trees.
+
+```{r}
 validation <- validation[, !names(validation) %in% NAcolumnsNames]
 validation <- validation[, !names(validation) %in% nonEmptyColumnsNames]
 validation <- validation[, !names(validation) %in% firstSeven]
 
 pred5 <- predict(rfFit5Trees, newdata = validation)
-confusionMatrix(pred5,validation$classe)
-
 pred10 <- predict(rfFit10Trees, newdata = validation)
-confusionMatrix(pred10,as.factor(validation$classe))
-
 pred50 <- predict(rfFit50Trees, newdata = validation)
-confusionMatrix(pred50,as.factor(validation$classe))
-
 pred100 <- predict(rfFit100Trees, newdata = validation)
-confusionMatrix(pred100,as.factor(validation$classe))
-
 pred200 <- predict(rfFit200Trees, newdata = validation)
-confusionMatrix(pred200,as.factor(validation$classe))
 
 treeAccuracy <- data.frame(
   Trees = c(5,10,50,100,200),
@@ -139,8 +183,27 @@ treeAccuracy <- data.frame(
                confusionMatrix(pred200,validation$classe)$overall[1])
 )
 
+g <- ggplot(data=treeAccuracy,aes(x=Trees,y=Accuracy)) + geom_point() + ggtitle("Tree Count vs. Model Accuracy")
+
+print(g)
+```
+
+## Cross validation
+
+The final model with 200 trees had an accuracy of 0.9929 on the validation sample. Recall that the validation sample was 25% of the initial data set. The 200 tree model was used as the final model due to the author's comfort with the larger number of trees.
+
+```{r}
+confusionMatrix(pred200,validation$classe)
+```
+
+## 20 unknown test cases
+The model was able to predict all 20 unknown test cases with 100% accuracy. Output is suppressed to maintain secrecy of the answers.
+
+```{r}
 testing <- testing[, !names(testing) %in% NAcolumnsNames]
 testing <- testing[, !names(testing) %in% nonEmptyColumnsNames]
 testing <- testing[, !names(testing) %in% firstSeven]
 
-pred2 <- predict(rfFit, newdata = testing)
+pred2 <- predict(rfFit200Trees, newdata = testing)
+```
+
